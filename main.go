@@ -11,23 +11,23 @@ type WorkerPool struct {
 	mu      sync.Mutex
 	workers map[int]context.CancelFunc
 	input   chan string
-	counter int
+	count   int
 }
 
-func NewWorkerPool(input chan string) *WorkerPool {
+func newPool(input chan string) *WorkerPool {
 	return &WorkerPool{
 		workers: make(map[int]context.CancelFunc),
 		input:   input,
 	}
 }
 
-func (wp *WorkerPool) AddWorker() {
+func (wp *WorkerPool) addWork() {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	id := wp.counter
-	wp.counter++
+	id := wp.count
+	wp.count++
 
 	wp.workers[id] = cancel
 
@@ -39,13 +39,19 @@ func (wp *WorkerPool) AddWorker() {
 				fmt.Printf("Worker %d ОСТАНОВИЛСЯ\n", workerID)
 				return
 			case data := <-wp.input:
-				fmt.Printf("Worker %d обработал: %s\n", workerID, data)
+				select {
+				case <-ctx.Done():
+					fmt.Printf("Worker %d прерван до обработки\n", workerID)
+					return
+				default:
+					fmt.Printf("Worker %d обработал: %s\n", workerID, data)
+				}
 			}
 		}
 	}(id, ctx)
 }
 
-func (wp *WorkerPool) RemoveWorker() {
+func (wp *WorkerPool) removeWork() {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 
@@ -55,9 +61,9 @@ func (wp *WorkerPool) RemoveWorker() {
 	}
 
 	var lastID int
-	for id := range wp.workers {
-		if id > lastID {
-			lastID = id
+	for v := range wp.workers {
+		if v > lastID {
+			lastID = v
 		}
 	}
 
@@ -67,32 +73,38 @@ func (wp *WorkerPool) RemoveWorker() {
 
 func main() {
 
-	inputChan := make(chan string)
-	pool := NewWorkerPool(inputChan)
+	input := make(chan string)
+	pool := newPool(input)
 	var numWorks int
 	fmt.Println("Введите количество необходимых воркеров")
 	fmt.Scan(&numWorks)
-	var taskCount int
+	var tasks int
 	fmt.Println("Введите количество задач: ")
-	fmt.Scan(&taskCount)
+	fmt.Scan(&tasks)
 	i := 0
 	for i < numWorks {
-		pool.AddWorker()
+		pool.addWork()
 		i++
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < taskCount; i++ {
-			inputChan <- fmt.Sprintf("задача-%d", i)
+		for i := 0; i < tasks; i++ {
+			input <- fmt.Sprintf("задача-%d", i)
 			time.Sleep(300 * time.Millisecond)
 		}
 	}()
 
 	time.Sleep(2 * time.Second)
 
-	pool.RemoveWorker()
+	pool.removeWork()
+
+	//time.Sleep(2 * time.Second)
+	//pool.removeWork()
+
+	//pool.removeWork()
+
 	wg.Wait()
 
 	time.Sleep(2 * time.Second)
